@@ -105,8 +105,8 @@ use ScriptDevelopment\KendoReportTool\KendoReports;
 public function store(Request $request): void
 {
     app(KendoReports::class)->submit(
-        title: $request->string('title'),
-        description: $request->string('description'),
+        title: (string) $request->input('title'),
+        description: (string) $request->input('description'),
         authorName: $request->user()?->name,
         files: $request->file('screenshots', []),   // UploadedFile[] — or string paths
     );
