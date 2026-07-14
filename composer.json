@@ -40,6 +40,7 @@
     },
     "scripts": {
         "test": "pest",
+        "test:coverage": "pest --coverage --min=98",
         "phpstan": "phpstan analyse",
         "format": "pint",
         "format:check": "pint --test"
