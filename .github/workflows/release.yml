@@ -30,7 +30,7 @@ jobs:
               uses: shivammathur/setup-php@728c6c6b8cf02c2e48117716a91ee48313958a19 # v2
               with:
                   php-version: ${{ matrix.php }}
-                  coverage: none
+                  coverage: pcov
                   tools: composer:v2
 
             - name: Install dependencies
@@ -45,8 +45,10 @@ jobs:
             - name: Static analysis
               run: composer phpstan
 
-            - name: Tests
-              run: composer test
+            # Coverage gate — mirrors ci.yml. Floor 98% (KendoReports.php:122 parked
+            # M-1 branch); aspiration --min=100. Teeth = pest --coverage --min CLI flag.
+            - name: Tests (coverage gate)
+              run: composer test:coverage
 
     release:
         needs: verify

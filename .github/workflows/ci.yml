@@ -20,7 +20,7 @@ jobs:
               uses: shivammathur/setup-php@728c6c6b8cf02c2e48117716a91ee48313958a19 # v2
               with:
                   php-version: ${{ matrix.php }}
-                  coverage: none
+                  coverage: pcov
                   tools: composer:v2
 
             - name: Install dependencies
@@ -35,8 +35,14 @@ jobs:
             - name: Static analysis
               run: composer phpstan
 
-            - name: Tests
-              run: composer test
+            # Coverage gate. Floor is the currently-measured 98% (KendoReports.php:122,
+            # the string-path file_get_contents attach branch, is the sole uncovered
+            # line — a parked M-1 Medic item). Aspiration: --min=100 once that branch
+            # is covered; ratchet the floor up then. Teeth are the pest --coverage --min
+            # CLI flag (a phpunit.xml <coverage> block alone is a silent no-op on
+            # PHPUnit 10+).
+            - name: Tests (coverage gate)
+              run: composer test:coverage
 
     # Aggregate check tracked by the town-crier trial (TC-0069) — intended as the
     # single required status check (the check (8.4)/(8.5) matrix legs stop being

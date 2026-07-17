@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- CI coverage gate: `pest --coverage --min=98` with the `pcov` driver on the PHP 8.4/8.5 matrix (CI) and the release-verify job. Floor is the currently-measured 98% (the string-path `file_get_contents` attach branch in `KendoReports` is the sole uncovered line, a parked item); aspiration `--min=100`, ratcheted up once that branch is covered.
+- Token-confidentiality regression tests: assert the `report:create` Bearer token never surfaces in a `ReportSubmissionException` message (rejection or transport failure) or in the `error_log` swallow path.
+
 ## [0.1.0] — 2026-06-08
 
 Inaugural public release — the kendo report-submission client library.

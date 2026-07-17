@@ -158,6 +158,77 @@ it('applies the configured connect and total timeouts to the request', function(
     expect($client->submit('Broken', 'It broke'))->toBe(created());
 });
 
+/**
+ * Token-confidentiality regression pin (Sapper durability caveat).
+ *
+ * The report:create Bearer token must never surface in a failure message.
+ * Today ReportSubmissionException carries only the HTTP status (rejected) or a
+ * transport reason (failed) — never the token. These pins lock that in: a future
+ * ->throw()/->retry() (which would fold the request — headers, Authorization —
+ * into the thrown/logged message) would fail here before it could leak the token
+ * into a caller-surfaced exception or the error_log swallow path.
+ */
+$secretToken = 'super-secret-report-create-token-value';
+
+it('never leaks the report:create token in the exception surfaced on a rejection', function() use ($secretToken): void {
+    config()->set('report-tool.token', $secretToken);
+    Http::fake(['kendo.test/*' => Http::response(['message' => 'nope'], 422)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->getMessage())
+            ->toContain('422')
+            ->not->toContain($secretToken);
+    }
+});
+
+it('never leaks the report:create token in the exception surfaced on a transport failure', function() use ($secretToken): void {
+    config()->set('report-tool.token', $secretToken);
+    Http::fake(function(): void {
+        // A realistic transport failure — Guzzle's ConnectionException message
+        // carries the curl error, never the request's Authorization header. The
+        // pin proves the client never sources the token into the failure reason
+        // it surfaces (a future ->throw()/->retry() that folded the request into
+        // the message would trip this).
+        throw new ConnectionException('cURL error 28: Operation timed out after 5000 milliseconds');
+    });
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->getMessage())->not->toContain($secretToken);
+    }
+});
+
+it('never leaks the report:create token into the error_log swallow path', function() use ($secretToken): void {
+    config()->set('report-tool.token', $secretToken);
+    config()->set('report-tool.swallow', true);
+    Http::fake(['kendo.test/*' => Http::response(['message' => 'nope'], 422)]);
+
+    $logFile = (string) tempnam(sys_get_temp_dir(), 'krt-errorlog-');
+    $previous = ini_set('error_log', $logFile);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        $logged = (string) file_get_contents($logFile);
+
+        expect($logged)
+            ->toContain('422')
+            ->not->toContain($secretToken);
+    } finally {
+        if ($previous !== false) {
+            ini_set('error_log', $previous);
+        }
+        @unlink($logFile);
+    }
+});
+
 it('falls back to the default timeouts when the configured values are non-positive', function(): void {
     config()->set('report-tool.connect_timeout', 0);
     config()->set('report-tool.timeout', 'nonsense');
