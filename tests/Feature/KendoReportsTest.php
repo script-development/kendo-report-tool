@@ -201,7 +201,9 @@ it('never leaks the report:create token in the exception surfaced on a transport
 
         throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
     } catch (ReportSubmissionException $e) {
-        expect($e->getMessage())->not->toContain($secretToken);
+        expect($e->getMessage())
+            ->toContain('Report submission failed: cURL error 28')
+            ->not->toContain($secretToken);
     }
 });
 
