@@ -29,6 +29,7 @@ The client targets the kendo reports ingestion endpoint (already live — no ken
 - **Namespace:** `ScriptDevelopment\KendoReportTool\` (PSR-4, `src/`).
 - **Config keys live in `config/report-tool.php`** with `REPORT_TOOL_*` env defaults.
 - **Surface failures by default.** A report has a human waiting on confirmation — `submit()` reports a failed send unless `swallow=true`. (Contrast error-tracker, which always swallows.)
+- **Misconfiguration is never swallowed.** `submit()` validates `kendo_url` / `project` / `token` before its `try` and throws `ReportConfigurationException`, which `fail()` never sees — a guard inside the `try` would be re-wrapped as a transport failure and swallowed.
 - **Synchronous send.** The caller needs the `201` + report id back, so there is no queue/async mode and no `illuminate/bus`/`illuminate/queue` dependency.
 - **No PII scrubbing.** Report content is intentional user-authored input; it is sent verbatim.
 

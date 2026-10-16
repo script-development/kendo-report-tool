@@ -4,11 +4,17 @@ declare(strict_types = 1);
 
 namespace ScriptDevelopment\KendoReportTool;
 
+use const FILTER_NULL_ON_FAILURE;
+use const FILTER_VALIDATE_BOOLEAN;
+use const PHP_URL_HOST;
+use const PHP_URL_SCHEME;
+
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Http\UploadedFile;
+use ScriptDevelopment\KendoReportTool\Exceptions\ReportConfigurationException;
 use ScriptDevelopment\KendoReportTool\Exceptions\ReportSubmissionException;
 use Throwable;
 
@@ -18,11 +24,16 @@ use function basename;
 use function count;
 use function error_log;
 use function file_get_contents;
+use function filter_var;
+use function in_array;
 use function is_array;
+use function is_bool;
 use function is_numeric;
 use function is_scalar;
 use function is_string;
 use function mb_rtrim;
+use function mb_trim;
+use function parse_url;
 use function sprintf;
 
 /**
@@ -55,6 +66,9 @@ final readonly class KendoReports
      * report-tool.swallow is true, in which case the failure is logged to the local
      * PHP error_log and null is returned.
      *
+     * A missing or malformed kendo_url / project / token throws a
+     * ReportConfigurationException before anything is sent, whatever swallow says.
+     *
      * More than MAX_FILES files is refused before anything is sent, as the same
      * ReportSubmissionException (errors() keyed by `files`).
      *
@@ -64,12 +78,15 @@ final readonly class KendoReports
      */
     public function submit(string $title, string $description, ?string $authorName = null, array $files = []): ?array
     {
+        $endpoint = $this->endpoint();
+        $token = $this->requiredString('token', 'REPORT_TOOL_TOKEN');
+
         if (count($files) > self::MAX_FILES) {
             return $this->fail(ReportSubmissionException::tooManyFiles(count($files), self::MAX_FILES));
         }
 
         try {
-            $response = $this->pendingRequest($files)->post($this->endpoint(), $this->fields($title, $description, $authorName));
+            $response = $this->pendingRequest($token, $files)->post($endpoint, $this->fields($title, $description, $authorName));
         } catch (Throwable $e) {
             return $this->fail(ReportSubmissionException::failed($e->getMessage()));
         }
@@ -90,11 +107,13 @@ final readonly class KendoReports
      */
     private function endpoint(): string
     {
-        return sprintf(
-            '%s/api/projects/%s/reports',
-            mb_rtrim($this->configString('kendo_url'), '/'),
-            $this->configString('project'),
-        );
+        $url = mb_rtrim($this->requiredString('kendo_url', 'REPORT_TOOL_KENDO_URL'), '/');
+
+        if (!in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true) || (string) parse_url($url, PHP_URL_HOST) === '') {
+            throw ReportConfigurationException::invalidUrl();
+        }
+
+        return sprintf('%s/api/projects/%s/reports', $url, $this->requiredString('project', 'REPORT_TOOL_PROJECT'));
     }
 
     /**
@@ -121,10 +140,10 @@ final readonly class KendoReports
      *
      * @param list<UploadedFile|string> $files
      */
-    private function pendingRequest(array $files): PendingRequest
+    private function pendingRequest(string $token, array $files): PendingRequest
     {
         $request = $this->http
-            ->withToken($this->configString('token'))
+            ->withToken($token)
             ->connectTimeout($this->configFloat('connect_timeout', 2.0))
             ->timeout($this->configFloat('timeout', 5.0))
             ->acceptJson()
@@ -216,8 +235,37 @@ final readonly class KendoReports
         return $coerced > 0.0 ? $coerced : $default;
     }
 
+    /**
+     * Read a string config value that the send cannot do without.
+     */
+    private function requiredString(string $key, string $env): string
+    {
+        $value = mb_trim($this->configString($key));
+
+        if ($value === '') {
+            throw ReportConfigurationException::missing($key, $env);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Read a boolean config value, narrowing the repository's mixed return. A
+     * string is parsed ("false", "0", "off" are false — a raw cast would make the
+     * string "false" true); anything unrecognised is false.
+     */
     private function configBool(string $key): bool
     {
-        return (bool) $this->config->get('report-tool.' . $key);
+        $value = $this->config->get('report-tool.' . $key);
+
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (!is_scalar($value)) {
+            return false;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? false;
     }
 }

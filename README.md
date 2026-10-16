@@ -140,6 +140,8 @@ The exception tells the failure classes apart:
 | `5xx` | `[]` | kendo failed; a later retry may succeed. |
 | `0` | `[]` | Transport failure (timeout, unreachable host). |
 
+A missing or malformed `kendo_url`, `project` or `token` throws `ScriptDevelopment\KendoReportTool\Exceptions\ReportConfigurationException` before anything is sent — also when swallowing, because a deployment that can never send is not a failed send. It is not a `ReportSubmissionException`.
+
 Set `REPORT_TOOL_SWALLOW=true` to flip to telemetry-style swallow-on-failure (logs to `error_log`, returns `null`) when you do **not** want the caller to handle failures.
 
 ## Contributing
