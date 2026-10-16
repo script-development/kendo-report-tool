@@ -113,7 +113,7 @@ public function store(Request $request): void
 }
 ```
 
-The server accepts up to **5 image files** (jpg/jpeg/png/bmp/gif/tiff/webp, ≤3 MB each).
+The server accepts up to **5 image files** (jpg/jpeg/png/bmp/gif/tiff/webp, ≤3 MB each). The client enforces the count (`KendoReports::MAX_FILES`): a call with more files is refused before anything is sent, with a `ReportSubmissionException` whose `errors()` is keyed by `files`. Type and size are checked by the server.
 
 ### Surfaced failure vs. swallow
 
@@ -126,10 +126,19 @@ try {
     app(KendoReports::class)->submit($title, $description);
     // tell the user it sent
 } catch (ReportSubmissionException $e) {
-    // tell the user it failed; $e->getMessage() distinguishes
-    // a rejection ("HTTP <status>") from a transport failure.
+    // tell the user it failed
 }
 ```
+
+The exception tells the failure classes apart:
+
+| `$e->status()` | `$e->errors()` | Meaning |
+|---|---|---|
+| `422` | field-keyed, e.g. `['title' => [...]]` | The payload was invalid — fix the input and resubmit. |
+| `0` | `['files' => [...]]` | Too many files; refused locally, nothing was sent. |
+| `401` / `403` | `[]` | The token or project setup is wrong — an operations problem, no resubmission fixes it. |
+| `5xx` | `[]` | kendo failed; a later retry may succeed. |
+| `0` | `[]` | Transport failure (timeout, unreachable host). |
 
 Set `REPORT_TOOL_SWALLOW=true` to flip to telemetry-style swallow-on-failure (logs to `error_log`, returns `null`) when you do **not** want the caller to handle failures.
 

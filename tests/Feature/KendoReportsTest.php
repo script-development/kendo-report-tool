@@ -252,3 +252,115 @@ it('falls back to the default timeouts when the configured values are non-positi
 
     expect($client->submit('Broken', 'It broke'))->toBe(created());
 });
+
+it('carries the status and the field-keyed validation errors of a 422 rejection', function(): void {
+    Http::fake(['kendo.test/*' => Http::response([
+        'message' => 'The title field must not be greater than 255 characters.',
+        'errors' => [
+            'title' => ['The title field must not be greater than 255 characters.'],
+            'files.0' => ['The files.0 field must be an image.'],
+        ],
+    ], 422)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(422)
+            ->and($e->errors())->toBe([
+                'title' => ['The title field must not be greater than 255 characters.'],
+                'files.0' => ['The files.0 field must be an image.'],
+            ])
+            ->and($e->getMessage())->toBe('Report submission rejected: HTTP 422 (invalid: title, files.0).');
+    }
+});
+
+it('carries a token rejection as its status with no field errors', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(['message' => 'This token only reaches its own project.'], 403)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(403)
+            ->and($e->errors())->toBe([]);
+    }
+});
+
+it('ignores a rejection body whose errors are not a field-keyed envelope', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(['errors' => ['not keyed', ['nested']]], 422)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(422)
+            ->and($e->errors())->toBe([]);
+    }
+});
+
+it('carries status 0 on a transport-level failure', function(): void {
+    Http::fake(function(): void {
+        throw new ConnectionException('Connection timed out');
+    });
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(0)
+            ->and($e->errors())->toBe([]);
+    }
+});
+
+it('refuses more files than the server accepts before sending anything', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    $files = array_map(
+        fn(int $i): UploadedFile => UploadedFile::fake()->image("shot-{$i}.png"),
+        range(1, KendoReports::MAX_FILES + 1),
+    );
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke', null, $files);
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(0)
+            ->and($e->errors())->toHaveKey('files')
+            ->and($e->getMessage())->toContain('6 files given, the server accepts at most 5');
+    }
+
+    Http::assertNothingSent();
+});
+
+it('sends exactly the maximum number of files', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    $files = array_map(
+        fn(int $i): UploadedFile => UploadedFile::fake()->image("shot-{$i}.png"),
+        range(1, KendoReports::MAX_FILES),
+    );
+
+    expect(app(KendoReports::class)->submit('Broken', 'It broke', null, $files))->toBe(created());
+
+    Http::assertSent(fn(Request $request): bool => collect($request->data())->where('name', 'files[]')->count() === KendoReports::MAX_FILES);
+});
+
+it('swallows a refused file count when swallowing, without sending', function(): void {
+    config()->set('report-tool.swallow', true);
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    $files = array_map(
+        fn(int $i): UploadedFile => UploadedFile::fake()->image("shot-{$i}.png"),
+        range(1, KendoReports::MAX_FILES + 1),
+    );
+
+    expect(app(KendoReports::class)->submit('Broken', 'It broke', null, $files))->toBeNull();
+
+    Http::assertNothingSent();
+});

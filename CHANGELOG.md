@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `ReportSubmissionException::status()` (the HTTP status, `0` when no response was received) and `ReportSubmissionException::errors()` (the field-keyed validation errors of a rejection), so a caller can tell an invalid payload from a token/project problem without parsing the message. A rejection with validation errors names the fields in its message.
+- Client-side file cap `KendoReports::MAX_FILES` (5, the server's own limit): a `submit()` with more files is refused before sending, as a `ReportSubmissionException` keyed by `files` (swallowed like any other failure when `swallow=true`).
 - CI coverage gate: `pest --coverage --min=98` with the `pcov` driver on the PHP 8.4/8.5 matrix (CI) and the release-verify job. Floor is the currently-measured 98% (the string-path `file_get_contents` attach branch in `KendoReports` is the sole uncovered line, a parked item); aspiration `--min=100`, ratcheted up once that branch is covered.
 - Token-confidentiality regression tests: assert the `report:create` Bearer token never surfaces in a `ReportSubmissionException` message (rejection or transport failure) or in the `error_log` swallow path.
 

@@ -7,16 +7,21 @@ namespace ScriptDevelopment\KendoReportTool;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Http\UploadedFile;
 use ScriptDevelopment\KendoReportTool\Exceptions\ReportSubmissionException;
 use Throwable;
 
 use function array_filter;
+use function array_values;
 use function basename;
+use function count;
 use function error_log;
 use function file_get_contents;
+use function is_array;
 use function is_numeric;
 use function is_scalar;
+use function is_string;
 use function mb_rtrim;
 use function sprintf;
 
@@ -32,6 +37,12 @@ use function sprintf;
  */
 final readonly class KendoReports
 {
+    /**
+     * The server's own cap (`files` => max:5). Enforced here so an oversized call
+     * fails with a named reason before the upload, not as a bare HTTP 422.
+     */
+    public const int MAX_FILES = 5;
+
     public function __construct(
         private HttpFactory $http,
         private Config $config,
@@ -44,12 +55,19 @@ final readonly class KendoReports
      * report-tool.swallow is true, in which case the failure is logged to the local
      * PHP error_log and null is returned.
      *
+     * More than MAX_FILES files is refused before anything is sent, as the same
+     * ReportSubmissionException (errors() keyed by `files`).
+     *
      * @param list<UploadedFile|string> $files uploadedFile instances or local file paths
      *
      * @return array<string, mixed>|null the decoded 201 body, or null when swallowing a failure
      */
     public function submit(string $title, string $description, ?string $authorName = null, array $files = []): ?array
     {
+        if (count($files) > self::MAX_FILES) {
+            return $this->fail(ReportSubmissionException::tooManyFiles(count($files), self::MAX_FILES));
+        }
+
         try {
             $response = $this->pendingRequest($files)->post($this->endpoint(), $this->fields($title, $description, $authorName));
         } catch (Throwable $e) {
@@ -57,7 +75,7 @@ final readonly class KendoReports
         }
 
         if ($response->status() !== 201) {
-            return $this->fail(ReportSubmissionException::rejected($response->status()));
+            return $this->fail(ReportSubmissionException::rejected($response->status(), $this->validationErrors($response)));
         }
 
         /** @var array<string, mixed> $body */
@@ -123,6 +141,33 @@ final readonly class KendoReports
         }
 
         return $request;
+    }
+
+    /**
+     * The `errors` object of a rejection body, narrowed to field => messages.
+     * Anything not shaped like Laravel's validation envelope yields [].
+     *
+     * @return array<string, list<string>>
+     */
+    private function validationErrors(Response $response): array
+    {
+        $errors = $response->json('errors');
+
+        if (!is_array($errors)) {
+            return [];
+        }
+
+        $narrowed = [];
+
+        foreach ($errors as $field => $messages) {
+            if (!is_string($field) || !is_array($messages)) {
+                continue;
+            }
+
+            $narrowed[$field] = array_values(array_filter($messages, is_string(...)));
+        }
+
+        return $narrowed;
     }
 
     /**
