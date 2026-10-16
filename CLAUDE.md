@@ -35,12 +35,17 @@ The client targets the kendo reports ingestion endpoint (already live — no ken
 
 ## Commands
 
+The CI gates (`.github/workflows/ci.yml`, both PHP legs; `release.yml` re-runs all but validate on the tag):
+
 | Command | Purpose |
 |---|---|
-| `composer test` | Run the Pest suite |
-| `composer phpstan` | Self-analysis (level max) on `src/` |
-| `composer format` | Pint write |
+| `composer validate --strict` | Manifest + lock check |
+| `composer audit` | Dependency advisories |
 | `composer format:check` | Pint check |
+| `composer phpstan` | Self-analysis (level max) on `src/` |
+| `composer test:coverage` | Pest suite with the `--min` coverage floor |
+
+Convenience only — no workflow runs them, so a green proves nothing about CI: `composer test` (Pest without the floor), `composer format` (Pint write).
 
 ## Versioning
 

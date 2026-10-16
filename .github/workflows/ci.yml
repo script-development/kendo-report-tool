@@ -38,12 +38,11 @@ jobs:
             - name: Static analysis
               run: composer phpstan
 
-            # Coverage gate. Floor is the currently-measured 98% (KendoReports.php:122,
-            # the string-path file_get_contents attach branch, is the sole uncovered
-            # line — a parked M-1 Medic item). Aspiration: --min=100 once that branch
-            # is covered; ratchet the floor up then. Teeth are the pest --coverage --min
-            # CLI flag (a phpunit.xml <coverage> block alone is a silent no-op on
-            # PHPUnit 10+).
+            # Coverage gate. The string-path attach branch in KendoReports::pendingRequest()
+            # (file_get_contents on a local path) is the uncovered code holding the floor
+            # below 100 — a parked item; ratchet --min up once it is covered. Teeth are
+            # the pest --coverage --min CLI flag (a phpunit.xml <coverage> block alone is
+            # a silent no-op on PHPUnit 10+).
             - name: Tests (coverage gate)
               run: composer test:coverage
 

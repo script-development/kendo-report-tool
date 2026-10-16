@@ -45,8 +45,8 @@ jobs:
             - name: Static analysis
               run: composer phpstan
 
-            # Coverage gate — mirrors ci.yml. Floor 98% (KendoReports.php:122 parked
-            # M-1 branch); aspiration --min=100. Teeth = pest --coverage --min CLI flag.
+            # Coverage gate — the same composer script as ci.yml. Teeth = pest
+            # --coverage --min CLI flag.
             - name: Tests (coverage gate)
               run: composer test:coverage
 

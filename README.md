@@ -146,4 +146,4 @@ Set `REPORT_TOOL_SWALLOW=true` to flip to telemetry-style swallow-on-failure (lo
 
 ## Contributing
 
-`composer test` · `composer phpstan` · `composer format:check` — all three gate CI on PHP 8.4 and 8.5. `main` is always release-ready; PRs update `CHANGELOG.md` under `[Unreleased]`.
+CI runs, on PHP 8.4 and 8.5: `composer validate --strict` · `composer audit` · `composer format:check` · `composer phpstan` · `composer test:coverage` (the Pest suite with a coverage floor). Run those to reproduce CI locally; `composer test` and `composer format` are convenience scripts no workflow runs. `main` is always release-ready; PRs update `CHANGELOG.md` under `[Unreleased]`.
