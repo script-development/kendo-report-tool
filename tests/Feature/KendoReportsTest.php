@@ -10,6 +10,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
+use ScriptDevelopment\KendoReportTool\Exceptions\ReportConfigurationException;
 use ScriptDevelopment\KendoReportTool\Exceptions\ReportSubmissionException;
 use ScriptDevelopment\KendoReportTool\KendoReports;
 
@@ -252,3 +253,192 @@ it('falls back to the default timeouts when the configured values are non-positi
 
     expect($client->submit('Broken', 'It broke'))->toBe(created());
 });
+
+it('carries the status and the field-keyed validation errors of a 422 rejection', function(): void {
+    Http::fake(['kendo.test/*' => Http::response([
+        'message' => 'The title field must not be greater than 255 characters.',
+        'errors' => [
+            'title' => ['The title field must not be greater than 255 characters.'],
+            'files.0' => ['The files.0 field must be an image.'],
+        ],
+    ], 422)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(422)
+            ->and($e->errors())->toBe([
+                'title' => ['The title field must not be greater than 255 characters.'],
+                'files.0' => ['The files.0 field must be an image.'],
+            ])
+            ->and($e->getMessage())->toBe('Report submission rejected: HTTP 422 (invalid: title, files.0).');
+    }
+});
+
+it('carries a token rejection as its status with no field errors', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(['message' => 'This token only reaches its own project.'], 403)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(403)
+            ->and($e->errors())->toBe([]);
+    }
+});
+
+it('ignores a rejection body whose errors are not a field-keyed envelope', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(['errors' => ['not keyed', ['nested']]], 422)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(422)
+            ->and($e->errors())->toBe([]);
+    }
+});
+
+it('carries status 0 on a transport-level failure', function(): void {
+    Http::fake(function(): void {
+        throw new ConnectionException('Connection timed out');
+    });
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(0)
+            ->and($e->errors())->toBe([]);
+    }
+});
+
+it('refuses more files than the server accepts before sending anything', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    $files = array_map(
+        fn(int $i): UploadedFile => UploadedFile::fake()->image("shot-{$i}.png"),
+        range(1, KendoReports::MAX_FILES + 1),
+    );
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke', null, $files);
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(0)
+            ->and($e->errors())->toHaveKey('files')
+            ->and($e->getMessage())->toContain('6 files given, the server accepts at most 5');
+    }
+
+    Http::assertNothingSent();
+});
+
+it('sends exactly the maximum number of files', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    $files = array_map(
+        fn(int $i): UploadedFile => UploadedFile::fake()->image("shot-{$i}.png"),
+        range(1, KendoReports::MAX_FILES),
+    );
+
+    expect(app(KendoReports::class)->submit('Broken', 'It broke', null, $files))->toBe(created());
+
+    Http::assertSent(fn(Request $request): bool => collect($request->data())->where('name', 'files[]')->count() === KendoReports::MAX_FILES);
+});
+
+it('swallows a refused file count when swallowing, without sending', function(): void {
+    config()->set('report-tool.swallow', true);
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    $files = array_map(
+        fn(int $i): UploadedFile => UploadedFile::fake()->image("shot-{$i}.png"),
+        range(1, KendoReports::MAX_FILES + 1),
+    );
+
+    expect(app(KendoReports::class)->submit('Broken', 'It broke', null, $files))->toBeNull();
+
+    Http::assertNothingSent();
+});
+
+it('refuses to send with a missing setting, even when swallowing', function(string $key, mixed $value, string $env, bool $swallow): void {
+    config()->set('report-tool.' . $key, $value);
+    config()->set('report-tool.swallow', $swallow);
+    Http::fake(['*' => Http::response(created(), 201)]);
+
+    expect(fn() => app(KendoReports::class)->submit('Broken', 'It broke'))
+        ->toThrow(ReportConfigurationException::class, "report-tool.{$key} is empty (set {$env})");
+
+    Http::assertNothingSent();
+})->with([
+    'kendo_url' => ['kendo_url', null, 'REPORT_TOOL_KENDO_URL'],
+    'project' => ['project', null, 'REPORT_TOOL_PROJECT'],
+    'token' => ['token', null, 'REPORT_TOOL_TOKEN'],
+    'blank token' => ['token', '   ', 'REPORT_TOOL_TOKEN'],
+])->with([
+    'surfacing' => [false],
+    'swallowing' => [true],
+]);
+
+it('refuses to send to a kendo_url that is not an absolute http(s) URL, even when swallowing', function(string $url, bool $swallow): void {
+    config()->set('report-tool.kendo_url', $url);
+    config()->set('report-tool.swallow', $swallow);
+    Http::fake(['*' => Http::response(created(), 201)]);
+
+    expect(fn() => app(KendoReports::class)->submit('Broken', 'It broke'))
+        ->toThrow(ReportConfigurationException::class, 'report-tool.kendo_url must be an absolute http(s) URL');
+
+    Http::assertNothingSent();
+})->with([
+    'no scheme' => ['kendo.test'],
+    'other scheme' => ['ftp://kendo.test'],
+    'no host' => ['https://'],
+    'a query, which would swallow the reports route' => ['https://kendo.test/?region=west'],
+    'a fragment, which the server never receives' => ['https://kendo.test#reports'],
+])->with([
+    'surfacing' => [false],
+    'swallowing' => [true],
+]);
+
+it('never names the configured token in a configuration failure', function(): void {
+    config()->set('report-tool.token', 'super-secret-report-create-token-value');
+    config()->set('report-tool.kendo_url', 'kendo.test');
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke');
+
+        throw new RuntimeException('Expected a ReportConfigurationException to be thrown.');
+    } catch (ReportConfigurationException $e) {
+        expect($e->getMessage())->not->toContain('super-secret-report-create-token-value');
+    }
+});
+
+it('reads a string swallow flag by its meaning, not by a raw cast', function(mixed $flag, bool $swallows): void {
+    config()->set('report-tool.swallow', $flag);
+    Http::fake(['kendo.test/*' => Http::response(['message' => 'nope'], 500)]);
+
+    $submit = fn() => app(KendoReports::class)->submit('Broken', 'It broke');
+
+    if ($swallows) {
+        expect($submit())->toBeNull();
+
+        return;
+    }
+
+    expect($submit)->toThrow(ReportSubmissionException::class);
+})->with([
+    'string "false"' => ['false', false],
+    'string "0"' => ['0', false],
+    'string "off"' => ['off', false],
+    'unrecognised string' => ['maybe', false],
+    'array' => [['true'], false],
+    'string "true"' => ['true', true],
+    'string "1"' => ['1', true],
+    'int 1' => [1, true],
+    'bool true' => [true, true],
+]);

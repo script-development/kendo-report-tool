@@ -113,7 +113,7 @@ public function store(Request $request): void
 }
 ```
 
-The server accepts up to **5 image files** (jpg/jpeg/png/bmp/gif/tiff/webp, ≤3 MB each).
+The server accepts up to **5 image files** (jpg/jpeg/png/bmp/gif/tiff/webp, ≤3 MB each). The client enforces the count (`KendoReports::MAX_FILES`): a call with more files is refused before anything is sent, with a `ReportSubmissionException` whose `errors()` is keyed by `files`. Type and size are checked by the server.
 
 ### Surfaced failure vs. swallow
 
@@ -126,13 +126,24 @@ try {
     app(KendoReports::class)->submit($title, $description);
     // tell the user it sent
 } catch (ReportSubmissionException $e) {
-    // tell the user it failed; $e->getMessage() distinguishes
-    // a rejection ("HTTP <status>") from a transport failure.
+    // tell the user it failed
 }
 ```
+
+The exception tells the failure classes apart:
+
+| `$e->status()` | `$e->errors()` | Meaning |
+|---|---|---|
+| `422` | field-keyed, e.g. `['title' => [...]]` | The payload was invalid — fix the input and resubmit. |
+| `0` | `['files' => [...]]` | Too many files; refused locally, nothing was sent. |
+| `401` / `403` | `[]` | The token or project setup is wrong — an operations problem, no resubmission fixes it. |
+| `5xx` | `[]` | kendo failed; a later retry may succeed. |
+| `0` | `[]` | Transport failure (timeout, unreachable host). |
+
+A missing or malformed `kendo_url`, `project` or `token` throws `ScriptDevelopment\KendoReportTool\Exceptions\ReportConfigurationException` before anything is sent — also when swallowing, because a deployment that can never send is not a failed send. It is not a `ReportSubmissionException`.
 
 Set `REPORT_TOOL_SWALLOW=true` to flip to telemetry-style swallow-on-failure (logs to `error_log`, returns `null`) when you do **not** want the caller to handle failures.
 
 ## Contributing
 
-`composer test` · `composer phpstan` · `composer format:check` — all three gate CI on PHP 8.4 and 8.5. `main` is always release-ready; PRs update `CHANGELOG.md` under `[Unreleased]`.
+CI runs, on PHP 8.4 and 8.5: `composer validate --strict` · `composer audit` · `composer format:check` · `composer phpstan` · `composer test:coverage` (the Pest suite with a coverage floor). Run those to reproduce CI locally; `composer test` and `composer format` are convenience scripts no workflow runs. `main` is always release-ready; PRs update `CHANGELOG.md` under `[Unreleased]`.

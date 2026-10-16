@@ -29,17 +29,23 @@ The client targets the kendo reports ingestion endpoint (already live — no ken
 - **Namespace:** `ScriptDevelopment\KendoReportTool\` (PSR-4, `src/`).
 - **Config keys live in `config/report-tool.php`** with `REPORT_TOOL_*` env defaults.
 - **Surface failures by default.** A report has a human waiting on confirmation — `submit()` reports a failed send unless `swallow=true`. (Contrast error-tracker, which always swallows.)
+- **Misconfiguration is never swallowed.** `submit()` validates `kendo_url` / `project` / `token` before its `try` and throws `ReportConfigurationException`, which `fail()` never sees — a guard inside the `try` would be re-wrapped as a transport failure and swallowed.
 - **Synchronous send.** The caller needs the `201` + report id back, so there is no queue/async mode and no `illuminate/bus`/`illuminate/queue` dependency.
 - **No PII scrubbing.** Report content is intentional user-authored input; it is sent verbatim.
 
 ## Commands
 
+The CI gates (`.github/workflows/ci.yml`, both PHP legs; `release.yml` re-runs all but validate on the tag):
+
 | Command | Purpose |
 |---|---|
-| `composer test` | Run the Pest suite |
-| `composer phpstan` | Self-analysis (level max) on `src/` |
-| `composer format` | Pint write |
+| `composer validate --strict` | Manifest + lock check |
+| `composer audit` | Dependency advisories |
 | `composer format:check` | Pint check |
+| `composer phpstan` | Self-analysis (level max) on `src/` |
+| `composer test:coverage` | Pest suite with the `--min` coverage floor |
+
+Convenience only — no workflow runs them, so a green proves nothing about CI: `composer test` (Pest without the floor), `composer format` (Pint write).
 
 ## Versioning
 
