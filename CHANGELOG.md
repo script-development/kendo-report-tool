@@ -12,6 +12,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Client-side file cap `KendoReports::MAX_FILES` (5, the server's own limit): a `submit()` with more files is refused before sending, as a `ReportSubmissionException` keyed by `files` (swallowed like any other failure when `swallow=true`).
 - `ReportConfigurationException`: `submit()` checks `kendo_url` (an absolute `http(s)` URL), `project` and `token` (non-blank) before sending and throws this, naming the key and env var, instead of failing as a transport error.
 
+- `.gitattributes` with `export-ignore` on the non-runtime tree (tests, CI, tool configs, `CLAUDE.md`), so the dist archive installed into consumers' `vendor/` carries only `src/`, `config/`, the manifest and the docs.
+- CI step `composer validate --strict`.
+
 ### Changed
 
 - A misconfigured install is no longer swallowed: the `ReportConfigurationException` above is thrown whatever `report-tool.swallow` says, and it is not a `ReportSubmissionException`, so a `catch (ReportSubmissionException)` no longer hides it.
