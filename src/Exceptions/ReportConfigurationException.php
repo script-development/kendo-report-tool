@@ -25,6 +25,6 @@ final class ReportConfigurationException extends RuntimeException
 
     public static function invalidUrl(): self
     {
-        return new self('kendo-report-tool is not configured: report-tool.kendo_url must be an absolute http(s) URL (set REPORT_TOOL_KENDO_URL).');
+        return new self('kendo-report-tool is not configured: report-tool.kendo_url must be an absolute http(s) URL with no query or fragment (set REPORT_TOOL_KENDO_URL).');
     }
 }

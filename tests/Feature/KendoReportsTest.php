@@ -398,6 +398,8 @@ it('refuses to send to a kendo_url that is not an absolute http(s) URL, even whe
     'no scheme' => ['kendo.test'],
     'other scheme' => ['ftp://kendo.test'],
     'no host' => ['https://'],
+    'a query, which would swallow the reports route' => ['https://kendo.test/?region=west'],
+    'a fragment, which the server never receives' => ['https://kendo.test#reports'],
 ])->with([
     'surfacing' => [false],
     'swallowing' => [true],

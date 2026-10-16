@@ -35,6 +35,7 @@ use function mb_rtrim;
 use function mb_trim;
 use function parse_url;
 use function sprintf;
+use function strpbrk;
 
 /**
  * The public client surface: submit a human-authored report into a kendo project.
@@ -109,7 +110,12 @@ final readonly class KendoReports
     {
         $url = mb_rtrim($this->requiredString('kendo_url', 'REPORT_TOOL_KENDO_URL'), '/');
 
-        if (!in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true) || (string) parse_url($url, PHP_URL_HOST) === '') {
+        // The route is appended to the URL text, so a query would swallow it and a fragment never reaches the server.
+        if (
+            !in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true)
+            || (string) parse_url($url, PHP_URL_HOST) === ''
+            || strpbrk($url, '?#') !== false
+        ) {
             throw ReportConfigurationException::invalidUrl();
         }
 
