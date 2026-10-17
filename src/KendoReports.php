@@ -24,11 +24,14 @@ use function basename;
 use function count;
 use function error_log;
 use function file_get_contents;
+use function filesize;
 use function filter_var;
 use function in_array;
 use function is_array;
 use function is_bool;
+use function is_file;
 use function is_numeric;
+use function is_readable;
 use function is_scalar;
 use function is_string;
 use function mb_rtrim;
@@ -55,6 +58,13 @@ final readonly class KendoReports
      */
     public const int MAX_FILES = 5;
 
+    /**
+     * The server's per-file cap (`files.*` => max('3mb')): Laravel's File rule reads
+     * "3mb" as 3000 kilobytes of 1024 bytes. Checked before a file is read, so an
+     * oversized attachment never enters this process's memory.
+     */
+    public const int MAX_FILE_BYTES = 3_072_000;
+
     public function __construct(
         private HttpFactory $http,
         private Config $config,
@@ -71,7 +81,9 @@ final readonly class KendoReports
      * ReportConfigurationException before anything is sent, whatever swallow says.
      *
      * More than MAX_FILES files is refused before anything is sent, as the same
-     * ReportSubmissionException (errors() keyed by `files`).
+     * ReportSubmissionException (errors() keyed by `files`). So is a file larger than
+     * MAX_FILE_BYTES, or a path that is not a readable file (errors() keyed by
+     * `files.{index}`), before any file is read.
      *
      * @param list<UploadedFile|string> $files uploadedFile instances or local file paths
      *
@@ -84,6 +96,14 @@ final readonly class KendoReports
 
         if (count($files) > self::MAX_FILES) {
             return $this->fail(ReportSubmissionException::tooManyFiles(count($files), self::MAX_FILES));
+        }
+
+        foreach ($files as $index => $file) {
+            $refusal = $this->refusal($index, $file);
+
+            if ($refusal !== null) {
+                return $this->fail($refusal);
+            }
         }
 
         try {
@@ -166,6 +186,32 @@ final readonly class KendoReports
         }
 
         return $request;
+    }
+
+    /**
+     * Why a file cannot be sent, judged from its size alone — the file is never
+     * opened here. is_file() first, because filesize() warns on a missing path and
+     * a host app turns that warning into an exception that would bypass swallow.
+     */
+    private function refusal(int $index, string|UploadedFile $file): ?ReportSubmissionException
+    {
+        if ($file instanceof UploadedFile) {
+            $name = $file->getClientOriginalName();
+            $size = $file->getSize();
+        } else {
+            $name = basename($file);
+            $size = is_file($file) && is_readable($file) ? filesize($file) : false;
+        }
+
+        if ($size === false) {
+            return ReportSubmissionException::unreadableFile($index, $name);
+        }
+
+        if ($size > self::MAX_FILE_BYTES) {
+            return ReportSubmissionException::fileTooLarge($index, $name, $size, self::MAX_FILE_BYTES);
+        }
+
+        return null;
     }
 
     /**

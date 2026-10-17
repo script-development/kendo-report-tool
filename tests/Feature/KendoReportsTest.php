@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Http;
 use ScriptDevelopment\KendoReportTool\Exceptions\ReportConfigurationException;
 use ScriptDevelopment\KendoReportTool\Exceptions\ReportSubmissionException;
 use ScriptDevelopment\KendoReportTool\KendoReports;
+use ScriptDevelopment\KendoReportTool\Tests\Fixtures\RecordingStreamWrapper;
 
 beforeEach(function(): void {
     config()->set('report-tool.kendo_url', 'https://kendo.test');
@@ -441,4 +442,129 @@ it('reads a string swallow flag by its meaning, not by a raw cast', function(mix
     'string "1"' => ['1', true],
     'int 1' => [1, true],
     'bool true' => [true, true],
+]);
+
+/**
+ * A local file of exactly $bytes bytes. ftruncate() makes it sparse, so the size
+ * costs no disk.
+ */
+function sizedFile(string $name, int $bytes): string
+{
+    $directory = sys_get_temp_dir() . '/krt-' . bin2hex(random_bytes(6));
+    mkdir($directory);
+    $path = $directory . '/' . $name;
+
+    $handle = fopen($path, 'wb');
+    ftruncate($handle, $bytes);
+    fclose($handle);
+
+    return $path;
+}
+
+it('refuses an over-limit path attachment without ever opening it', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+    stream_wrapper_register(RecordingStreamWrapper::PROTOCOL, RecordingStreamWrapper::class);
+    RecordingStreamWrapper::reset(KendoReports::MAX_FILE_BYTES + 1);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke', null, [RecordingStreamWrapper::PROTOCOL . '://shots/huge.png']);
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->getMessage())->toContain('huge.png');
+    } finally {
+        stream_wrapper_unregister(RecordingStreamWrapper::PROTOCOL);
+    }
+
+    expect(RecordingStreamWrapper::$opens)->toBe(0);
+    Http::assertNothingSent();
+});
+
+it('names the file and the limit when refusing an over-limit path attachment', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+    $path = sizedFile('huge.png', KendoReports::MAX_FILE_BYTES + 1);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke', null, [sizedFile('small.png', 10), $path]);
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->status())->toBe(0)
+            ->and($e->errors())->toHaveKey('files.1')
+            ->and($e->getMessage())->toBe('Report submission rejected before sending: huge.png is 3072001 bytes, the server accepts at most 3072000 bytes per file.')
+            ->and($e->getMessage())->not->toContain(\dirname($path));
+    }
+
+    Http::assertNothingSent();
+});
+
+it('logs and returns null for an over-limit path attachment when swallowing', function(): void {
+    config()->set('report-tool.swallow', true);
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    $logFile = (string) tempnam(sys_get_temp_dir(), 'krt-errorlog-');
+    $previous = ini_set('error_log', $logFile);
+
+    try {
+        expect(app(KendoReports::class)->submit('Broken', 'It broke', null, [sizedFile('huge.png', KendoReports::MAX_FILE_BYTES + 1)]))->toBeNull();
+
+        expect((string) file_get_contents($logFile))
+            ->toContain('huge.png is 3072001 bytes, the server accepts at most 3072000 bytes per file');
+    } finally {
+        if ($previous !== false) {
+            ini_set('error_log', $previous);
+        }
+        @unlink($logFile);
+    }
+
+    Http::assertNothingSent();
+});
+
+it('sends a path attachment of exactly the limit, with its contents', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    expect(app(KendoReports::class)->submit('Broken', 'It broke', null, [sizedFile('edge.png', KendoReports::MAX_FILE_BYTES)]))->toBe(created());
+
+    Http::assertSent(function(Request $request): bool {
+        $part = collect($request->data())->firstWhere('name', 'files[]');
+
+        expect($part['filename'])->toBe('edge.png')
+            ->and(mb_strlen((string) $part['contents']))->toBe(KendoReports::MAX_FILE_BYTES);
+
+        return true;
+    });
+});
+
+it('refuses an over-limit uploaded file before sending', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke', null, [UploadedFile::fake()->create('huge.png', 3_001)]);
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->errors())->toHaveKey('files.0')
+            ->and($e->getMessage())->toContain('huge.png is 3073024 bytes');
+    }
+
+    Http::assertNothingSent();
+});
+
+it('refuses a path that is not a readable file before sending', function(bool $swallow): void {
+    config()->set('report-tool.swallow', $swallow);
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+    $missing = sys_get_temp_dir() . '/krt-no-such-dir/missing.png';
+
+    $submit = fn() => app(KendoReports::class)->submit('Broken', 'It broke', null, [$missing]);
+
+    if ($swallow) {
+        expect($submit())->toBeNull();
+    } else {
+        expect($submit)->toThrow(ReportSubmissionException::class, 'Report submission rejected before sending: missing.png is not a readable file.');
+    }
+
+    Http::assertNothingSent();
+})->with([
+    'surfacing' => [false],
+    'swallowing' => [true],
 ]);

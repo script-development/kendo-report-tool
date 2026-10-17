@@ -113,7 +113,7 @@ public function store(Request $request): void
 }
 ```
 
-The server accepts up to **5 image files** (jpg/jpeg/png/bmp/gif/tiff/webp, ≤3 MB each). The client enforces the count (`KendoReports::MAX_FILES`): a call with more files is refused before anything is sent, with a `ReportSubmissionException` whose `errors()` is keyed by `files`. Type and size are checked by the server.
+The server accepts up to **5 image files** (jpg/jpeg/png/bmp/gif/tiff/webp, ≤3 MB each). The client enforces the count (`KendoReports::MAX_FILES`): a call with more files is refused before anything is sent, with a `ReportSubmissionException` whose `errors()` is keyed by `files`. It also enforces the size (`KendoReports::MAX_FILE_BYTES`, 3,072,000 bytes — the server's `3mb`) and refuses a path that is not a readable file, keyed by `files.{index}`; a file is sized before it is read, so an oversized one never enters memory. The type is checked by the server.
 
 ### Surfaced failure vs. swallow
 
@@ -136,6 +136,7 @@ The exception tells the failure classes apart:
 |---|---|---|
 | `422` | field-keyed, e.g. `['title' => [...]]` | The payload was invalid — fix the input and resubmit. |
 | `0` | `['files' => [...]]` | Too many files; refused locally, nothing was sent. |
+| `0` | `['files.1' => [...]]` | That file is over `MAX_FILE_BYTES` or not a readable file; refused locally, nothing was sent. |
 | `401` / `403` | `[]` | The token or project setup is wrong — an operations problem, no resubmission fixes it. |
 | `5xx` | `[]` | kendo failed; a later retry may succeed. |
 | `0` | `[]` | Transport failure (timeout, unreachable host). |

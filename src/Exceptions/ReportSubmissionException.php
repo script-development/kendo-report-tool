@@ -55,6 +55,22 @@ final class ReportSubmissionException extends RuntimeException
         return $exception;
     }
 
+    public static function fileTooLarge(int $index, string $name, int $bytes, int $max): self
+    {
+        $exception = new self(sprintf('Report submission rejected before sending: %s is %d bytes, the server accepts at most %d bytes per file.', $name, $bytes, $max));
+        $exception->errors = ['files.' . $index => [sprintf('The file may be at most %d bytes.', $max)]];
+
+        return $exception;
+    }
+
+    public static function unreadableFile(int $index, string $name): self
+    {
+        $exception = new self(sprintf('Report submission rejected before sending: %s is not a readable file.', $name));
+        $exception->errors = ['files.' . $index => ['The file could not be read.']];
+
+        return $exception;
+    }
+
     public function status(): int
     {
         return $this->getCode();
