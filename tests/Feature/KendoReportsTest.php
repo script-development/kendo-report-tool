@@ -480,6 +480,27 @@ it('refuses an over-limit path attachment without ever opening it', function(): 
     Http::assertNothingSent();
 });
 
+it('refuses a path attachment that grew past the limit after it was sized, reading no more than the limit', function(): void {
+    Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
+    stream_wrapper_register(RecordingStreamWrapper::PROTOCOL, RecordingStreamWrapper::class);
+    RecordingStreamWrapper::reset(1_024);
+    RecordingStreamWrapper::$contentSize = KendoReports::MAX_FILE_BYTES * 4;
+
+    try {
+        app(KendoReports::class)->submit('Broken', 'It broke', null, [RecordingStreamWrapper::PROTOCOL . '://shots/grown.png']);
+
+        throw new RuntimeException('Expected a ReportSubmissionException to be thrown.');
+    } catch (ReportSubmissionException $e) {
+        expect($e->getMessage())->toContain('grown.png');
+    } finally {
+        stream_wrapper_unregister(RecordingStreamWrapper::PROTOCOL);
+    }
+
+    // PHP's stream layer reads ahead in 8 KiB chunks, so the wrapper may serve one chunk past the cap.
+    expect(RecordingStreamWrapper::$bytesRead)->toBeLessThanOrEqual(KendoReports::MAX_FILE_BYTES + 1 + 8_192);
+    Http::assertNothingSent();
+});
+
 it('names the file and the limit when refusing an over-limit path attachment', function(): void {
     Http::fake(['kendo.test/*' => Http::response(created(), 201)]);
     $path = sizedFile('huge.png', KendoReports::MAX_FILE_BYTES + 1);

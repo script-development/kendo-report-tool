@@ -19,6 +19,11 @@ final class RecordingStreamWrapper
 
     public static int $opens = 0;
 
+    /** Bytes served on read when it differs from the stat size: a file that grew after it was sized. */
+    public static ?int $contentSize = null;
+
+    public static int $bytesRead = 0;
+
     /** @var resource|null */
     public $context;
 
@@ -28,6 +33,8 @@ final class RecordingStreamWrapper
     {
         self::$size = $size;
         self::$opens = 0;
+        self::$contentSize = null;
+        self::$bytesRead = 0;
     }
 
     public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool
@@ -39,15 +46,16 @@ final class RecordingStreamWrapper
 
     public function stream_read(int $count): string
     {
-        $length = min($count, self::$size - $this->position);
+        $length = min($count, (self::$contentSize ?? self::$size) - $this->position);
         $this->position += $length;
+        self::$bytesRead += $length;
 
         return str_repeat('x', $length);
     }
 
     public function stream_eof(): bool
     {
-        return $this->position >= self::$size;
+        return $this->position >= (self::$contentSize ?? self::$size);
     }
 
     /**

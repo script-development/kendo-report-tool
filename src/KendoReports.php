@@ -35,6 +35,7 @@ use function is_readable;
 use function is_scalar;
 use function is_string;
 use function mb_rtrim;
+use function mb_strlen;
 use function mb_trim;
 use function parse_url;
 use function sprintf;
@@ -98,16 +99,20 @@ final readonly class KendoReports
             return $this->fail(ReportSubmissionException::tooManyFiles(count($files), self::MAX_FILES));
         }
 
-        foreach ($files as $index => $file) {
-            $refusal = $this->refusal($index, $file);
-
-            if ($refusal !== null) {
-                return $this->fail($refusal);
-            }
-        }
-
+        // The preflight sits inside the try too: a path removed after is_file() makes filesize() warn,
+        // and a host that turns warnings into exceptions must still reach fail(), not bypass swallow.
         try {
+            foreach ($files as $index => $file) {
+                $refusal = $this->refusal($index, $file);
+
+                if ($refusal !== null) {
+                    return $this->fail($refusal);
+                }
+            }
+
             $response = $this->pendingRequest($token, $files)->post($endpoint, $this->fields($title, $description, $authorName));
+        } catch (ReportSubmissionException $e) {
+            return $this->fail($e);
         } catch (Throwable $e) {
             return $this->fail(ReportSubmissionException::failed($e->getMessage()));
         }
@@ -175,14 +180,25 @@ final readonly class KendoReports
             ->acceptJson()
             ->asMultipart();
 
-        foreach ($files as $file) {
+        foreach ($files as $index => $file) {
             if ($file instanceof UploadedFile) {
                 $request = $request->attach('files[]', (string) $file->getContent(), $file->getClientOriginalName());
 
                 continue;
             }
 
-            $request = $request->attach('files[]', (string) file_get_contents($file), basename($file));
+            // The read is bounded and judged again: the file can grow or be swapped after refusal() sized it.
+            $contents = file_get_contents($file, false, null, 0, self::MAX_FILE_BYTES + 1);
+
+            if ($contents === false) {
+                throw ReportSubmissionException::unreadableFile($index, basename($file));
+            }
+
+            if (mb_strlen($contents) > self::MAX_FILE_BYTES) {
+                throw ReportSubmissionException::fileTooLarge($index, basename($file), mb_strlen($contents), self::MAX_FILE_BYTES);
+            }
+
+            $request = $request->attach('files[]', $contents, basename($file));
         }
 
         return $request;
